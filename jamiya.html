@@ -18,6 +18,15 @@
   header{padding:20px 16px 0;text-align:center}
   header h1{margin:0;font-size:1.6rem;font-weight:800}
   header p{margin:4px 0 0;color:var(--muted);font-size:.95rem}
+  .sync{display:table;margin:10px auto 0;max-width:min(640px,100%);font-size:.82rem;font-weight:600;line-height:1.5;padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:var(--card)}
+  .sync.wait{color:var(--accent2)}
+  .sync.ok{color:var(--accent)}
+  .sync.bad{color:#be123c}
+  @media (prefers-color-scheme: dark){
+    .sync.bad{color:#fda4af}
+  }
+  .sync-help{display:table;margin:8px auto 0;color:var(--accent);font-size:.85rem;font-weight:700}
+  .sync-help[hidden]{display:none !important}
   .tabs{display:flex;gap:8px;justify-content:center;margin:18px 16px 0}
   .tab{border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-weight:600;
        padding:10px 22px;border-radius:999px;cursor:pointer}
@@ -37,6 +46,7 @@
               padding:12px 34px;border-radius:12px;cursor:pointer}
   button.main:disabled{opacity:.45;cursor:not-allowed}
   button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line);font:inherit;padding:12px 18px;border-radius:12px;cursor:pointer}
+  button.ghost:disabled{opacity:.45;cursor:not-allowed}
   .result{margin-top:14px;text-align:center;min-height:56px;font-size:1.05rem}
   .result b{color:var(--accent);font-size:1.25rem}
   h2{margin:0 0 12px;font-size:1.15rem}
@@ -61,7 +71,9 @@
 <body>
 <header>
   <h1>جمعية الـ 30,000</h1>
-  <p>10 مشاركات × 3,000 شهرياً — تبدأ 1-10-2026</p>
+  <p id="intro">10 مشاركات × 3,000 شهرياً — تبدأ <bdi>1-10-2026</bdi></p>
+  <div class="sync wait" id="syncStatus">جاري الاتصال بقاعدة البيانات…</div>
+  <a class="sync-help" id="syncHelp" href="https://console.firebase.google.com/project/al-taawun-pharmacies-reports/firestore" target="_blank" rel="noopener" hidden>فتح Cloud Firestore في لوحة Firebase</a>
 </header>
 
 <div class="tabs">
@@ -81,7 +93,7 @@
           <button class="main" id="spin">أدِر العجلة</button>
           <button class="ghost" id="reset">إعادة القرعة</button>
         </div>
-        <div class="result" id="result">المشاركة الأولى (علي + ايات) ثابتة لشهر تشرين الأول 2026</div>
+        <div class="result" id="result">المشاركة الأولى (ايات) ثابتة لشهر تشرين الأول 2026</div>
       </div>
       <div class="card">
         <h2>نتيجة القرعة</h2>
@@ -105,10 +117,21 @@
   </section>
 </main>
 
-<script>
-const POT = 30000, MONTHS_COUNT = 10;
+<script type="module">
+const firebaseConfig = {
+  apiKey: "AIzaSyAzU_xSW4UAAqrdG-CSXqSsqzwLmsNjRUk",
+  authDomain: "al-taawun-pharmacies-reports.firebaseapp.com",
+  projectId: "al-taawun-pharmacies-reports",
+  storageBucket: "al-taawun-pharmacies-reports.firebasestorage.app",
+  messagingSenderId: "463440776748",
+  appId: "1:463440776748:web:46fa7d96f6d8bc21b68b89",
+  measurementId: "G-QG22G3J6J4"
+};
+
+let POT = 30000, MONTHS_COUNT = 10;
+let startYear = 2026, startMonth = 9;
 const SHARES = [
-  {n:1,  m:[['علي',1000],['ايات',2000]]},
+  {n:1,  m:[['ايات',3000]]},
   {n:2,  m:[['خليل',1000],['ايمن',2000]]},
   {n:3,  m:[['احمد احسان',3000]]},
   {n:4,  m:[['اواب',3000]]},
@@ -120,26 +143,148 @@ const SHARES = [
   {n:10, m:[['دندون',3000]]},
 ];
 const MONTH_NAMES = ['كانون الثاني','شباط','آذار','نيسان','أيار','حزيران','تموز','آب','أيلول','تشرين الأول','تشرين الثاني','كانون الأول'];
-function monthLabel(i){ // i = 0 → Oct 2026
-  const d = new Date(2026, 9 + i, 1);
+function monthLabel(i){
+  const d = new Date(startYear, startMonth + i, 1);
   return MONTH_NAMES[d.getMonth()] + ' ' + d.getFullYear();
 }
 const fmt = n => n.toLocaleString('en-US');
 const byN = n => SHARES.find(s => s.n === n);
 const names = s => s.m.map(x => x[0]).join(' + ');
+const esc = s => String(s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+function fixedShareMessage(){
+  const share = byN(1);
+  const who = share ? names(share) : 'ايات';
+  return `المشاركة الأولى (${who}) ثابتة لشهر ${monthLabel(0)}`;
+}
 
-// ---------- state ----------
 const KEY = 'jamiya30000-draw';
-let drawn = [1];          // order of shares drawn; share 1 fixed first
+let drawn = [1];
 let lastNew = null;
-try { const s = JSON.parse(localStorage.getItem(KEY)); if (Array.isArray(s) && s[0] === 1) drawn = s; } catch(e){}
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(drawn)); } catch(e){} };
+let spinning = false;
+let dbReady = false;
+let heardRemote = false;
+let pendingSnap = null;
+let pendingConfig = null;
+let db = null;
+let fs = null;
+
+function sanitizeDrawn(arr){
+  const valid = [];
+  if (Array.isArray(arr)){
+    for (const n of arr){
+      const num = typeof n === 'number' ? n : Number(n);
+      if (!Number.isInteger(num) || !SHARES.some(s => s.n === num) || valid.includes(num)) continue;
+      valid.push(num);
+    }
+  }
+  if (valid[0] !== 1 && SHARES.some(s => s.n === 1)){
+    const rest = valid.filter(n => n !== 1);
+    valid.splice(0, valid.length, 1, ...rest);
+  }
+  return valid.slice(0, MONTHS_COUNT);
+}
+try {
+  const saved = JSON.parse(localStorage.getItem(KEY));
+  if (Array.isArray(saved) && saved[0] === 1) drawn = sanitizeDrawn(saved);
+} catch (e) {}
+const persistLocal = () => { try { localStorage.setItem(KEY, JSON.stringify(drawn)); } catch (e) {} };
 const remaining = () => SHARES.filter(s => !drawn.includes(s.n));
 
-// ---------- wheel ----------
+function setStatus(kind, text, showHelp){
+  const el = document.getElementById('syncStatus');
+  el.className = 'sync ' + kind;
+  el.textContent = text;
+  document.getElementById('syncHelp').hidden = !showHelp;
+}
+function showDbError(err){
+  dbReady = false;
+  updateButtons();
+  const code = String((err && (err.code || err.message)) || '');
+  if (code.includes('permission-denied')){
+    setStatus('bad', 'الوصول مرفوض. أضف قواعد القراءة والكتابة في Firestore ثم حدّث الصفحة.', true);
+  } else if (code.includes('failed-precondition') || code.includes('not-found') || code.includes('NOT_FOUND') || code.includes('does not exist')){
+    setStatus('bad', 'قاعدة Cloud Firestore غير موجودة بعد. أنشئها ثم حدّث الصفحة.', true);
+  } else if (code.includes('unavailable')){
+    setStatus('bad', 'تعذر الوصول إلى Firebase الآن. تحقق من الإنترنت.', false);
+  } else {
+    setStatus('bad', 'انقطع الاتصال. تُعرض آخر نتيجة محفوظة على هذا الجهاز.', false);
+  }
+}
+async function explainFirestore(err){
+  const code = String((err && err.code) || '');
+  if (code.includes('not-found') || code.includes('permission-denied') || code.includes('failed-precondition')) return err;
+  try {
+    const res = await fetch('https://firestore.googleapis.com/v1/projects/' + firebaseConfig.projectId + '/databases/%28default%29/documents/jamiya30000/state?key=' + firebaseConfig.apiKey);
+    const body = await res.json().catch(() => ({}));
+    const message = (body.error && body.error.message) || '';
+    if (res.status === 404 && /does not exist/i.test(message)) return { code: 'not-found', message };
+    if (res.status === 401 || res.status === 403) return { code: 'permission-denied', message };
+  } catch (e) {}
+  return err;
+}
+function fromServer(snap){
+  return !!snap && (!snap.metadata || (!snap.metadata.fromCache && !snap.metadata.hasPendingWrites));
+}
+function withTimeout(promise, ms){
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject({ code: 'unavailable', message: 'timeout' }), ms);
+    Promise.resolve(promise).then(
+      value => { clearTimeout(timer); resolve(value); },
+      err => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
+
+function configPayload(){
+  return {
+    pot: POT,
+    months: MONTHS_COUNT,
+    start: startYear + '-' + String(startMonth + 1).padStart(2, '0') + '-01',
+    shares: SHARES.map(s => ({
+      n: s.n,
+      members: s.m.map(([name, amount]) => ({ name, amount }))
+    }))
+  };
+}
+function applyConfig(data){
+  if (!data || !Array.isArray(data.shares) || !data.shares.length) return false;
+  const next = [];
+  const seen = new Set();
+  for (const share of data.shares){
+    if (!Number.isInteger(share.n) || seen.has(share.n) || !Array.isArray(share.members) || !share.members.length) return false;
+    const members = [];
+    for (const mem of share.members){
+      if (!mem || typeof mem.name !== 'string' || !mem.name.trim()) return false;
+      if (!Number.isFinite(mem.amount) || mem.amount <= 0) return false;
+      members.push([mem.name.trim(), mem.amount]);
+    }
+    seen.add(share.n);
+    next.push({ n: share.n, m: members });
+  }
+  if (!next.some(s => s.n === 1)) return false;
+  const months = Number.isInteger(data.months) ? data.months : next.length;
+  if (months !== next.length || months < 1 || months > 36) return false;
+  if (typeof data.start === 'string'){
+    const match = /^(\d{4})-(\d{2})-\d{2}$/.exec(data.start);
+    if (!match) return false;
+    const month = Number(match[2]);
+    if (month < 1 || month > 12) return false;
+    startYear = Number(match[1]);
+    startMonth = month - 1;
+  }
+  if (Number.isFinite(data.pot) && data.pot > 0) POT = data.pot;
+  MONTHS_COUNT = months;
+  next.sort((a, b) => a.n - b.n);
+  SHARES.splice(0, SHARES.length, ...next);
+  drawn = sanitizeDrawn(drawn);
+  const intro = document.getElementById('intro');
+  intro.innerHTML = MONTHS_COUNT + ' مشاركات × ' + fmt(POT / MONTHS_COUNT) + ' شهرياً — تبدأ <bdi>1-' + (startMonth + 1) + '-' + startYear + '</bdi>';
+  return true;
+}
+
 const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
 const COLORS = ['#0f766e','#b45309','#7c3aed','#be123c','#1d4ed8','#4d7c0f','#c2410c','#0e7490','#a21caf'];
-let rot = 0, spinning = false;
+let rot = 0;
 
 function drawWheel(){
   const W = cv.width, c = W/2, r = c - 16;
@@ -173,10 +318,142 @@ function drawWheel(){
   ctx.fillText(segs.length, c, c);
 }
 
-function spin(){
+function stateDoc(){ return fs.doc(db, 'jamiya30000', 'state'); }
+function configDoc(){ return fs.doc(db, 'jamiya30000', 'config'); }
+
+async function acquireLock(){
+  return fs.runTransaction(db, async (tx) => {
+    const ref = stateDoc();
+    const snap = await tx.get(ref);
+    const data = snap.exists() ? snap.data() : {};
+    const lock = data.spinLock;
+    if (typeof lock === 'number' && Date.now() - lock < 15000) return { busy: true };
+    const current = sanitizeDrawn(data.drawn);
+    tx.set(ref, { drawn: current, lastNew: data.lastNew ?? null, spinLock: Date.now() }, { merge: true });
+    return { busy: false, drawn: current };
+  });
+}
+async function commitWinner(shareN){
+  return fs.runTransaction(db, async (tx) => {
+    const ref = stateDoc();
+    const snap = await tx.get(ref);
+    const data = snap.exists() ? snap.data() : {};
+    const current = sanitizeDrawn(data.drawn);
+    if (current.includes(shareN) || current.length >= MONTHS_COUNT){
+      tx.set(ref, { spinLock: null, updatedAt: fs.serverTimestamp() }, { merge: true });
+      return { drawn: current, added: false, lastNew: Number.isInteger(data.lastNew) ? data.lastNew : null };
+    }
+    current.push(shareN);
+    tx.set(ref, {
+      drawn: current,
+      lastNew: shareN,
+      spinLock: null,
+      updatedAt: fs.serverTimestamp()
+    }, { merge: true });
+    return { drawn: current, added: true, lastNew: shareN };
+  });
+}
+async function releaseLock(){
+  try { await fs.setDoc(stateDoc(), { spinLock: null }, { merge: true }); } catch (e) {}
+}
+async function resetRemote(){
+  return fs.runTransaction(db, async (tx) => {
+    const ref = stateDoc();
+    const snap = await tx.get(ref);
+    const data = snap.exists() ? snap.data() : {};
+    const lock = data.spinLock;
+    if (typeof lock === 'number' && Date.now() - lock < 15000) return { busy: true };
+    tx.set(ref, {
+      drawn: [1],
+      lastNew: null,
+      spinLock: null,
+      updatedAt: fs.serverTimestamp()
+    }, { merge: true });
+    return { busy: false };
+  });
+}
+
+function applySnap(snap){
+  if (!fromServer(snap)) return;
+  if (!snap.exists()){
+    setStatus('wait', 'جاري إنشاء سجل القرعة في قاعدة البيانات…');
+    fs.setDoc(stateDoc(), {
+      drawn: [1],
+      lastNew: null,
+      spinLock: null,
+      updatedAt: fs.serverTimestamp()
+    }).catch(async (err) => showDbError(await explainFirestore(err)));
+    return;
+  }
+  const data = snap.data() || {};
+  const next = sanitizeDrawn(data.drawn);
+  const nextLast = Number.isInteger(data.lastNew) ? data.lastNew : null;
+  const same = heardRemote && JSON.stringify(next) === JSON.stringify(drawn) && nextLast === lastNew;
+  drawn = next;
+  lastNew = nextLast;
+  dbReady = true;
+  persistLocal();
+  if (!same){
+    const box = document.getElementById('result');
+    if (nextLast && drawn.includes(nextLast) && drawn.length > 1){
+      const share = byN(nextLast);
+      const idx = drawn.lastIndexOf(nextLast);
+      box.innerHTML = share && idx >= 0
+        ? `آخر نتيجة: <b>${esc(names(share))}</b><br>يقبض في ${esc(monthLabel(idx))} — ${fmt(POT)}`
+        : esc(fixedShareMessage());
+    } else {
+      box.textContent = fixedShareMessage();
+    }
+    render();
+  } else {
+    updateButtons();
+  }
+  heardRemote = true;
+  const when = data.updatedAt && typeof data.updatedAt.toDate === 'function'
+    ? data.updatedAt.toDate().toLocaleString('ar')
+    : '';
+  setStatus('ok', when ? 'متصل — آخر تحديث ' + when : 'متصل — النتيجة مشتركة بين الجميع');
+}
+function flushSnap(){
+  if (spinning || !pendingSnap) return;
+  const snap = pendingSnap;
+  pendingSnap = null;
+  applySnap(snap);
+}
+
+async function spin(){
+  if (spinning || !dbReady || !remaining().length) return;
+  spinning = true;
+  updateButtons();
+  let locked;
+  try {
+    locked = await acquireLock();
+  } catch (err) {
+    spinning = false;
+    showDbError(err);
+    document.getElementById('result').textContent = 'تعذر بدء القرعة. تحقق من الاتصال ثم أعد المحاولة.';
+    updateButtons();
+    flushSnap();
+    return;
+  }
+  if (locked.busy){
+    spinning = false;
+    updateButtons();
+    document.getElementById('result').textContent = 'القرعة تعمل على جهاز آخر الآن. انتظر حتى تنتهي.';
+    flushSnap();
+    return;
+  }
+  drawn = locked.drawn;
   const segs = remaining();
-  if (spinning || !segs.length) return;
-  spinning = true; updateButtons();
+  if (!segs.length){
+    await releaseLock();
+    spinning = false;
+    updateButtons();
+    render();
+    flushSnap();
+    return;
+  }
+  drawWheel();
   const k = Math.floor(Math.random() * segs.length);
   const arc = Math.PI*2 / segs.length;
   const TAU = Math.PI*2;
@@ -187,40 +464,71 @@ function spin(){
   const ease = t => 1 - Math.pow(1 - t, 4);
   (function frame(now){
     const t = Math.min(1, (now - t0) / dur);
-    rot = start + delta * ease(t); drawWheel();
+    rot = start + delta * ease(t);
+    drawWheel();
     if (t < 1) return requestAnimationFrame(frame);
-    const win = segs[k];
-    drawn.push(win.n); lastNew = win.n; save();
-    const idx = drawn.length - 1;
-    document.getElementById('result').innerHTML =
-      `مبروك! <b>${names(win)}</b><br>يقبض في ${monthLabel(idx)} — ${fmt(POT)}`;
-    spinning = false;
-    setTimeout(() => { rot = 0; render(); }, 1400);
-    renderDraws(); renderTables(); updateButtons();
+    finishSpin(segs[k]);
   })(t0);
 }
 
-function updateButtons(){
-  document.getElementById('spin').disabled = spinning || !remaining().length;
-  document.getElementById('reset').disabled = spinning;
+async function finishSpin(win){
+  const box = document.getElementById('result');
+  try {
+    const committed = await commitWinner(win.n);
+    pendingSnap = null;
+    drawn = committed.drawn;
+    lastNew = committed.lastNew;
+    persistLocal();
+    heardRemote = true;
+    if (committed.added){
+      const idx = drawn.lastIndexOf(win.n);
+      box.innerHTML = `مبروك! <b>${esc(names(win))}</b><br>يقبض في ${esc(monthLabel(idx))} — ${fmt(POT)}`;
+    } else {
+      box.textContent = 'لم تُحفظ نتيجة جديدة. حدّثت القائمة حسب قاعدة البيانات.';
+    }
+    setStatus('ok', 'تم حفظ النتيجة — وهي ظاهرة عند الجميع');
+  } catch (err) {
+    await releaseLock();
+    showDbError(err);
+    box.textContent = 'تعذر حفظ النتيجة في قاعدة البيانات.';
+  }
+  spinning = false;
+  updateButtons();
+  if (pendingConfig){
+    const data = pendingConfig;
+    pendingConfig = null;
+    applyConfig(data);
+  }
+  renderDraws();
+  renderTables();
+  setTimeout(() => {
+    if (spinning) return;
+    rot = 0;
+    drawWheel();
+    flushSnap();
+  }, 1400);
 }
 
-// ---------- lists ----------
+function updateButtons(){
+  document.getElementById('spin').disabled = spinning || !dbReady || !remaining().length;
+  document.getElementById('reset').disabled = spinning || !dbReady;
+}
+
 function renderDraws(){
-  const ol = document.getElementById('draws'); ol.innerHTML = '';
+  const ol = document.getElementById('draws');
+  ol.innerHTML = '';
   for (let i = 0; i < MONTHS_COUNT; i++){
     const li = document.createElement('li');
-    const s = drawn[i] ? byN(drawn[i]) : null;
-    if (!s) li.className = 'pending';
-    if (s && s.n === lastNew) li.className = 'new';
-    li.innerHTML = `<span class="month">${i+1}. ${monthLabel(i)}</span>
-      <span>${s ? names(s) + (i === 0 ? '<span class="tag">ثابت</span>' : '') : '—'}</span>`;
+    const share = drawn[i] ? byN(drawn[i]) : null;
+    if (!share) li.className = 'pending';
+    if (share && share.n === lastNew) li.className = 'new';
+    li.innerHTML = `<span class="month">${i + 1}. ${esc(monthLabel(i))}</span>
+      <span>${share ? esc(names(share)) + (i === 0 ? '<span class="tag">ثابت</span>' : '') : '—'}</span>`;
     ol.appendChild(li);
   }
 }
 
 function currentOrder(){
-  // full draw → use it; otherwise drawn part then the rest in the agreed order
   return drawn.concat(SHARES.map(s => s.n).filter(n => !drawn.includes(n)));
 }
 
@@ -233,50 +541,148 @@ function renderTables(){
         ? `الأشهر الأولى (${drawn.length}) حسب القرعة، والباقي حسب الترتيب المتفق عليه إلى أن تكتمل القرعة.`
         : 'الأشهر حسب الترتيب المتفق عليه. بعد إدارة العجلة تتحدث تلقائياً حسب القرعة.');
 
-  let h = `<thead><tr><th>الشهر</th><th>المشاركة</th><th>الاسم</th><th>الدفع الشهري</th><th>حصته من القبض</th></tr></thead><tbody>`;
+  let html = `<thead><tr><th>الشهر</th><th>المشاركة</th><th>الاسم</th><th>الدفع الشهري</th><th>حصته من القبض</th></tr></thead><tbody>`;
   let total = 0;
-  order.forEach((n,i) => {
-    const s = byN(n);
-    s.m.forEach(([name,amt],j) => {
+  order.forEach((n, i) => {
+    const share = byN(n);
+    if (!share) return;
+    share.m.forEach(([name, amt], j) => {
       total += amt;
-      h += `<tr class="${j===0?'share-start':''}">`;
-      if (j === 0) h += `<td rowspan="${s.m.length}" class="month">${monthLabel(i)}</td><td rowspan="${s.m.length}">${s.n}</td>`;
-      h += `<td>${name}</td><td class="num">${fmt(amt)}</td><td class="num">${fmt(amt * MONTHS_COUNT)}</td></tr>`;
+      html += `<tr class="${j === 0 ? 'share-start' : ''}">`;
+      if (j === 0) html += `<td rowspan="${share.m.length}" class="month">${esc(monthLabel(i))}</td><td rowspan="${share.m.length}">${share.n}</td>`;
+      html += `<td>${esc(name)}</td><td class="num">${fmt(amt)}</td><td class="num">${fmt(amt * MONTHS_COUNT)}</td></tr>`;
     });
   });
-  h += `</tbody><tfoot><tr><td colspan="3">المجموع الشهري</td><td class="num">${fmt(total)}</td><td></td></tr></tfoot>`;
-  document.getElementById('sharesTable').innerHTML = h;
+  html += `</tbody><tfoot><tr><td colspan="3">المجموع الشهري</td><td class="num">${fmt(total)}</td><td></td></tr></tfoot>`;
+  document.getElementById('sharesTable').innerHTML = html;
 
-  // people summary
   const people = new Map();
-  order.forEach((n,i) => byN(n).m.forEach(([name,amt]) => {
-    if (!people.has(name)) people.set(name, {pay:0, rec:[]});
-    const p = people.get(name); p.pay += amt; p.rec.push(`${fmt(amt*MONTHS_COUNT)} في ${monthLabel(i)}`);
-  }));
-  let p = `<thead><tr><th>الاسم</th><th>يدفع شهرياً</th><th>مجموع ما يدفعه</th><th>يقبض</th></tr></thead><tbody>`;
-  people.forEach((v,name) => {
-    p += `<tr><td>${name}</td><td class="num">${fmt(v.pay)}</td><td class="num">${fmt(v.pay*MONTHS_COUNT)}</td><td>${v.rec.join('<br>')}</td></tr>`;
+  order.forEach((n, i) => {
+    const share = byN(n);
+    if (!share) return;
+    share.m.forEach(([name, amt]) => {
+      if (!people.has(name)) people.set(name, { pay: 0, rec: [] });
+      const person = people.get(name);
+      person.pay += amt;
+      person.rec.push(`${fmt(amt * MONTHS_COUNT)} في ${monthLabel(i)}`);
+    });
   });
-  p += `</tbody>`;
-  document.getElementById('peopleTable').innerHTML = p;
+  let peopleHtml = `<thead><tr><th>الاسم</th><th>يدفع شهرياً</th><th>مجموع ما يدفعه</th><th>يقبض</th></tr></thead><tbody>`;
+  people.forEach((person, name) => {
+    peopleHtml += `<tr><td>${esc(name)}</td><td class="num">${fmt(person.pay)}</td><td class="num">${fmt(person.pay * MONTHS_COUNT)}</td><td>${person.rec.map(esc).join('<br>')}</td></tr>`;
+  });
+  peopleHtml += `</tbody>`;
+  document.getElementById('peopleTable').innerHTML = peopleHtml;
 }
 
-function render(){ drawWheel(); renderDraws(); renderTables(); updateButtons(); }
+function render(){
+  drawWheel();
+  renderDraws();
+  renderTables();
+  updateButtons();
+}
+
+async function connectFirebase(){
+  if (location.protocol === 'file:'){
+    setStatus('bad', 'افتح الصفحة عبر خادم أو استضافة. الربط لا يعمل من ملف مباشر.', false);
+    return;
+  }
+  try {
+    const { initializeApp } = await import('https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js');
+    fs = await import('https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js');
+    const app = initializeApp(firebaseConfig);
+    db = fs.getFirestore(app);
+    import('https://www.gstatic.com/firebasejs/11.10.0/firebase-analytics.js').then(async (analytics) => {
+      try { if (await analytics.isSupported()) analytics.getAnalytics(app); } catch (e) {}
+    }).catch(() => {});
+  } catch (err) {
+    setStatus('bad', 'تعذر تحميل مكتبات Firebase. تحقق من الإنترنت ثم أعد تحميل الصفحة.', false);
+    return;
+  }
+
+  let serverSnap;
+  try {
+    serverSnap = await withTimeout(fs.getDocFromServer(stateDoc()), 8000);
+  } catch (err) {
+    showDbError(await explainFirestore(err));
+    return;
+  }
+  if (!serverSnap.exists()){
+    try {
+      await withTimeout(fs.setDoc(stateDoc(), {
+        drawn: [1],
+        lastNew: null,
+        spinLock: null,
+        updatedAt: fs.serverTimestamp()
+      }), 8000);
+    } catch (err) {
+      showDbError(await explainFirestore(err));
+      return;
+    }
+  }
+  try {
+    const cfg = await withTimeout(fs.getDocFromServer(configDoc()), 8000);
+    if (!cfg.exists()){
+      await fs.setDoc(configDoc(), { ...configPayload(), updatedAt: fs.serverTimestamp() });
+    } else if (applyConfig(cfg.data())) {
+      render();
+    }
+  } catch (e) {}
+
+  const live = { includeMetadataChanges: true };
+  fs.onSnapshot(configDoc(), live, (snap) => {
+    if (!fromServer(snap) || !snap.exists()) return;
+    if (spinning){ pendingConfig = snap.data(); return; }
+    if (applyConfig(snap.data())) render();
+  }, () => {});
+  fs.onSnapshot(stateDoc(), live, (snap) => {
+    if (!fromServer(snap)){
+      if (!dbReady) setStatus('wait', 'جاري تأكيد الاتصال بقاعدة البيانات…');
+      return;
+    }
+    if (spinning){ pendingSnap = snap; return; }
+    applySnap(snap);
+  }, async (err) => showDbError(await explainFirestore(err)));
+}
 
 document.getElementById('spin').onclick = spin;
-document.getElementById('reset').onclick = () => {
-  if (!confirm('إعادة القرعة من البداية؟')) return;
-  drawn = [1]; lastNew = null; rot = 0; save();
-  document.getElementById('result').textContent = 'المشاركة الأولى (علي + ايات) ثابتة لشهر تشرين الأول 2026';
-  render();
+document.getElementById('reset').onclick = async () => {
+  if (spinning || !dbReady) return;
+  if (!confirm('إعادة القرعة من البداية؟ ستُمسح النتيجة عند الجميع.')) return;
+  spinning = true;
+  updateButtons();
+  try {
+    const result = await resetRemote();
+    if (result.busy){
+      document.getElementById('result').textContent = 'لا يمكن الإعادة الآن لأن القرعة تعمل على جهاز آخر.';
+    } else {
+      pendingSnap = null;
+      drawn = [1];
+      lastNew = null;
+      rot = 0;
+      heardRemote = true;
+      persistLocal();
+      document.getElementById('result').textContent = fixedShareMessage();
+      setStatus('ok', 'تمت إعادة القرعة عند الجميع');
+      render();
+    }
+  } catch (err) {
+    showDbError(err);
+    document.getElementById('result').textContent = 'تعذر إعادة القرعة على قاعدة البيانات.';
+  }
+  spinning = false;
+  updateButtons();
+  flushSnap();
 };
-document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
-  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === b));
-  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === b.dataset.tab));
+document.querySelectorAll('.tab').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('.tab').forEach(tab => tab.classList.toggle('active', tab === btn));
+  document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('active', panel.id === btn.dataset.tab));
 });
 
+document.getElementById('result').textContent = fixedShareMessage();
 render();
-document.fonts && document.fonts.ready.then(drawWheel);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (!spinning) drawWheel(); });
+connectFirebase();
 </script>
 </body>
 </html>

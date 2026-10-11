@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Wheel of Fortune / جمعية 30000.
+    // If this project already has rules, paste this match inside them
+    // and do not delete the other match blocks.
+    match /jamiya30000/{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
