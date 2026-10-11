@@ -47,6 +47,14 @@
   button.main:disabled{opacity:.45;cursor:not-allowed}
   button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line);font:inherit;padding:12px 18px;border-radius:12px;cursor:pointer}
   button.ghost:disabled{opacity:.45;cursor:not-allowed}
+  .notice[hidden]{display:none !important}
+  .notice:not([hidden]){position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:30}
+  .notice-card{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:20px;width:min(440px,100%)}
+  .check{display:flex;align-items:center;gap:10px;margin:12px 0;font-weight:700;cursor:pointer}
+  .check input{width:18px;height:18px;accent-color:var(--accent)}
+  .pin{width:100%;font:inherit;font-weight:800;letter-spacing:.45em;text-align:center;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+  .pin-error{color:#be123c;font-size:.85rem;font-weight:700;margin:8px 0 0;text-align:center}
+  .pin-error[hidden]{display:none !important}
   .result{margin-top:14px;text-align:center;min-height:56px;font-size:1.05rem}
   .result b{color:var(--accent);font-size:1.25rem}
   h2{margin:0 0 12px;font-size:1.15rem}
@@ -65,6 +73,8 @@
   tfoot td{font-weight:800}
   .table-scroll{overflow-x:auto}
   .note{color:var(--muted);font-size:.9rem;margin:0 0 12px}
+  #gateNote{text-align:center;margin:12px 0 0}
+  .pending-name{color:var(--muted)}
   .grid2{display:grid;gap:18px}
 </style>
 </head>
@@ -91,8 +101,8 @@
         </div>
         <div class="btns">
           <button class="main" id="spin">أدِر العجلة</button>
-          <button class="ghost" id="reset">إعادة القرعة</button>
         </div>
+        <p class="note" id="gateNote"></p>
         <div class="result" id="result">المشاركة الأولى (ايات) ثابتة لشهر تشرين الأول 2026</div>
       </div>
       <div class="card">
@@ -111,11 +121,30 @@
       </div>
       <div class="card">
         <h2>ملخص كل شخص</h2>
+        <p class="note">كل صف يبيّن مع من يشترك في نفس المشاركة.</p>
         <div class="table-scroll"><table id="peopleTable"></table></div>
       </div>
     </div>
   </section>
 </main>
+
+<div class="notice" id="spinNotice" hidden>
+  <div class="notice-card" role="dialog" aria-modal="true" aria-labelledby="noticeTitle">
+    <h2 id="noticeTitle">قبل إدارة العجلة</h2>
+    <p class="note" id="noticeLead">لا يبدأ التدوير إلا بعد الرمز وتأكيد الحالتين.</p>
+    <label class="pin-label" for="noticePin">رمز الإدارة</label>
+    <input class="pin" id="noticePin" type="password" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="••••">
+    <p class="pin-error" id="noticePinError" hidden>الرمز غير صحيح</p>
+    <div id="noticeChecks">
+      <label class="check"><input type="checkbox" id="noticePresent"> هل جميع المشاركين موجودين؟</label>
+      <label class="check"><input type="checkbox" id="noticeRecord"> هل يتم تسجيل القرعة؟</label>
+    </div>
+    <div class="btns">
+      <button class="main" id="noticeGo" type="button" disabled>أدِر العجلة</button>
+      <button class="ghost" id="noticeCancel" type="button">إلغاء</button>
+    </div>
+  </div>
+</div>
 
 <script type="module">
 const firebaseConfig = {
@@ -143,9 +172,18 @@ const SHARES = [
   {n:10, m:[['دندون',3000]]},
 ];
 const MONTH_NAMES = ['كانون الثاني','شباط','آذار','نيسان','أيار','حزيران','تموز','آب','أيلول','تشرين الأول','تشرين الثاني','كانون الأول'];
+function monthDate(i){
+  return new Date(startYear, startMonth + i, 1);
+}
 function monthLabel(i){
-  const d = new Date(startYear, startMonth + i, 1);
+  const d = monthDate(i);
   return MONTH_NAMES[d.getMonth()] + ' ' + d.getFullYear();
+}
+function canOpenWheel(){
+  if (drawn.length >= MONTHS_COUNT || !SHARES.some(s => !drawn.includes(s.n))) return false;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return today >= monthDate(drawn.length);
 }
 const fmt = n => n.toLocaleString('en-US');
 const byN = n => SHARES.find(s => s.n === n);
@@ -286,10 +324,23 @@ const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
 const COLORS = ['#0f766e','#b45309','#7c3aed','#be123c','#1d4ed8','#4d7c0f','#c2410c','#0e7490','#a21caf'];
 let rot = 0;
 
+function drawClosedWheel(){
+  const W = cv.width, c = W/2, r = c - 16;
+  ctx.clearRect(0,0,W,W);
+  ctx.beginPath(); ctx.arc(c,c,r,0,Math.PI*2); ctx.fillStyle='#0f766e'; ctx.fill();
+  ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.direction='rtl';
+  ctx.font='800 64px Cairo';
+  ctx.fillText('مغلقة', c, c - 28);
+  ctx.font='600 28px Cairo';
+  ctx.fillText('تُفتح في ' + monthLabel(drawn.length), c, c + 36);
+}
 function drawWheel(){
+  const pointer = document.querySelector('.pointer');
+  if (pointer) pointer.style.visibility = canOpenWheel() ? 'visible' : 'hidden';
   const W = cv.width, c = W/2, r = c - 16;
   ctx.clearRect(0,0,W,W);
   const segs = remaining();
+  if (segs.length && !canOpenWheel()){ drawClosedWheel(); return; }
   if (!segs.length){
     ctx.beginPath(); ctx.arc(c,c,r,0,Math.PI*2); ctx.fillStyle='#0f766e'; ctx.fill();
     ctx.fillStyle='#fff'; ctx.font='800 52px Cairo'; ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -356,22 +407,6 @@ async function commitWinner(shareN){
 async function releaseLock(){
   try { await fs.setDoc(stateDoc(), { spinLock: null }, { merge: true }); } catch (e) {}
 }
-async function resetRemote(){
-  return fs.runTransaction(db, async (tx) => {
-    const ref = stateDoc();
-    const snap = await tx.get(ref);
-    const data = snap.exists() ? snap.data() : {};
-    const lock = data.spinLock;
-    if (typeof lock === 'number' && Date.now() - lock < 15000) return { busy: true };
-    tx.set(ref, {
-      drawn: [1],
-      lastNew: null,
-      spinLock: null,
-      updatedAt: fs.serverTimestamp()
-    }, { merge: true });
-    return { busy: false };
-  });
-}
 
 function applySnap(snap){
   if (!fromServer(snap)) return;
@@ -422,6 +457,10 @@ function flushSnap(){
 }
 
 async function spin(){
+  if (!canOpenWheel()){
+    updateButtons();
+    return;
+  }
   if (spinning || !dbReady || !remaining().length) return;
   spinning = true;
   updateButtons();
@@ -510,8 +549,17 @@ async function finishSpin(win){
 }
 
 function updateButtons(){
-  document.getElementById('spin').disabled = spinning || !dbReady || !remaining().length;
-  document.getElementById('reset').disabled = spinning || !dbReady;
+  document.getElementById('spin').disabled = spinning || !dbReady || !remaining().length || !canOpenWheel();
+}
+function renderGate(){
+  const note = document.getElementById('gateNote');
+  if (!remaining().length){
+    note.textContent = 'اكتملت القرعة.';
+    return;
+  }
+  note.textContent = canOpenWheel()
+    ? 'قرعة ' + monthLabel(drawn.length) + ' مفتوحة.'
+    : 'العجلة مغلقة حتى ' + monthLabel(drawn.length) + '. الاسم لم يُحدد بعد.';
 }
 
 function renderDraws(){
@@ -523,53 +571,41 @@ function renderDraws(){
     if (!share) li.className = 'pending';
     if (share && share.n === lastNew) li.className = 'new';
     li.innerHTML = `<span class="month">${i + 1}. ${esc(monthLabel(i))}</span>
-      <span>${share ? esc(names(share)) + (i === 0 ? '<span class="tag">ثابت</span>' : '') : '—'}</span>`;
+      <span>${share ? esc(names(share)) + (i === 0 ? '<span class="tag">ثابت</span>' : '') : '<span class="pending-name">يُحدد عند فتح العجلة</span>'}</span>`;
     ol.appendChild(li);
   }
 }
 
-function currentOrder(){
-  return drawn.concat(SHARES.map(s => s.n).filter(n => !drawn.includes(n)));
-}
-
 function renderTables(){
-  const order = currentOrder();
-  const complete = drawn.length === MONTHS_COUNT;
-  document.getElementById('orderNote').textContent = complete
-    ? 'الأشهر حسب نتيجة القرعة.'
-    : (drawn.length > 1
-        ? `الأشهر الأولى (${drawn.length}) حسب القرعة، والباقي حسب الترتيب المتفق عليه إلى أن تكتمل القرعة.`
-        : 'الأشهر حسب الترتيب المتفق عليه. بعد إدارة العجلة تتحدث تلقائياً حسب القرعة.');
+  document.getElementById('orderNote').textContent = 'عمود الشهر يعرض الأشهر التي حددتها القرعة فقط.';
 
   let html = `<thead><tr><th>الشهر</th><th>المشاركة</th><th>الاسم</th><th>الدفع الشهري</th><th>حصته من القبض</th></tr></thead><tbody>`;
   let total = 0;
-  order.forEach((n, i) => {
-    const share = byN(n);
-    if (!share) return;
+  for (let i = 0; i < drawn.length; i++){
+    const share = byN(drawn[i]);
+    if (!share) continue;
     share.m.forEach(([name, amt], j) => {
       total += amt;
       html += `<tr class="${j === 0 ? 'share-start' : ''}">`;
       if (j === 0) html += `<td rowspan="${share.m.length}" class="month">${esc(monthLabel(i))}</td><td rowspan="${share.m.length}">${share.n}</td>`;
       html += `<td>${esc(name)}</td><td class="num">${fmt(amt)}</td><td class="num">${fmt(amt * MONTHS_COUNT)}</td></tr>`;
     });
-  });
+  }
   html += `</tbody><tfoot><tr><td colspan="3">المجموع الشهري</td><td class="num">${fmt(total)}</td><td></td></tr></tfoot>`;
   document.getElementById('sharesTable').innerHTML = html;
 
-  const people = new Map();
-  order.forEach((n, i) => {
-    const share = byN(n);
-    if (!share) return;
-    share.m.forEach(([name, amt]) => {
-      if (!people.has(name)) people.set(name, { pay: 0, rec: [] });
-      const person = people.get(name);
-      person.pay += amt;
-      person.rec.push(`${fmt(amt * MONTHS_COUNT)} في ${monthLabel(i)}`);
+  let peopleHtml = `<thead><tr><th>المشاركة</th><th>الاسم</th><th>يشترك مع</th><th>يدفع شهرياً</th><th>مجموع ما يدفعه</th><th>يقبض</th></tr></thead><tbody>`;
+  SHARES.forEach(share => {
+    const idx = drawn.indexOf(share.n);
+    const allNames = share.m.map(([name]) => name);
+    share.m.forEach(([name, amt], j) => {
+      const others = allNames.filter(person => person !== name);
+      const link = others.length ? others.join(' + ') : 'منفرد';
+      const rec = idx >= 0 ? fmt(amt * MONTHS_COUNT) + ' في ' + monthLabel(idx) : 'يُحدد لاحقاً';
+      peopleHtml += `<tr class="${j === 0 ? 'share-start' : ''}">`;
+      if (j === 0) peopleHtml += `<td rowspan="${share.m.length}">${share.n}</td>`;
+      peopleHtml += `<td>${esc(name)}</td><td>${esc(link)}</td><td class="num">${fmt(amt)}</td><td class="num">${fmt(amt * MONTHS_COUNT)}</td><td>${esc(rec)}</td></tr>`;
     });
-  });
-  let peopleHtml = `<thead><tr><th>الاسم</th><th>يدفع شهرياً</th><th>مجموع ما يدفعه</th><th>يقبض</th></tr></thead><tbody>`;
-  people.forEach((person, name) => {
-    peopleHtml += `<tr><td>${esc(name)}</td><td class="num">${fmt(person.pay)}</td><td class="num">${fmt(person.pay * MONTHS_COUNT)}</td><td>${person.rec.map(esc).join('<br>')}</td></tr>`;
   });
   peopleHtml += `</tbody>`;
   document.getElementById('peopleTable').innerHTML = peopleHtml;
@@ -579,6 +615,7 @@ function render(){
   drawWheel();
   renderDraws();
   renderTables();
+  renderGate();
   updateButtons();
 }
 
@@ -645,34 +682,47 @@ async function connectFirebase(){
   }, async (err) => showDbError(await explainFirestore(err)));
 }
 
-document.getElementById('spin').onclick = spin;
-document.getElementById('reset').onclick = async () => {
-  if (spinning || !dbReady) return;
-  if (!confirm('إعادة القرعة من البداية؟ ستُمسح النتيجة عند الجميع.')) return;
-  spinning = true;
-  updateButtons();
-  try {
-    const result = await resetRemote();
-    if (result.busy){
-      document.getElementById('result').textContent = 'لا يمكن الإعادة الآن لأن القرعة تعمل على جهاز آخر.';
-    } else {
-      pendingSnap = null;
-      drawn = [1];
-      lastNew = null;
-      rot = 0;
-      heardRemote = true;
-      persistLocal();
-      document.getElementById('result').textContent = fixedShareMessage();
-      setStatus('ok', 'تمت إعادة القرعة عند الجميع');
-      render();
-    }
-  } catch (err) {
-    showDbError(err);
-    document.getElementById('result').textContent = 'تعذر إعادة القرعة على قاعدة البيانات.';
+const WHEEL_PIN = '5566';
+document.getElementById('spin').onclick = () => {
+  if (spinning || !dbReady || !remaining().length || !canOpenWheel()){
+    updateButtons();
+    return;
   }
-  spinning = false;
-  updateButtons();
-  flushSnap();
+  openNotice();
+};
+function noticeReady(){
+  const pin = document.getElementById('noticePin').value;
+  const pinOk = pin === WHEEL_PIN;
+  const checksOk = document.getElementById('noticePresent').checked && document.getElementById('noticeRecord').checked;
+  document.getElementById('noticePinError').hidden = pin.length < 4 || pinOk;
+  document.getElementById('noticeGo').disabled = !(pinOk && checksOk);
+}
+function openNotice(){
+  document.getElementById('noticePin').value = '';
+  document.getElementById('noticePresent').checked = false;
+  document.getElementById('noticeRecord').checked = false;
+  noticeReady();
+  document.getElementById('spinNotice').hidden = false;
+  document.getElementById('noticePin').focus();
+}
+function closeSpinNotice(){
+  document.getElementById('spinNotice').hidden = true;
+}
+document.getElementById('noticePin').oninput = () => {
+  const pin = document.getElementById('noticePin');
+  pin.value = pin.value.replace(/\D/g, '').slice(0, 4);
+  noticeReady();
+};
+document.getElementById('noticePresent').onchange = noticeReady;
+document.getElementById('noticeRecord').onchange = noticeReady;
+document.getElementById('noticeCancel').onclick = closeSpinNotice;
+document.getElementById('noticeGo').onclick = () => {
+  if (document.getElementById('noticeGo').disabled) return;
+  closeSpinNotice();
+  spin();
+};
+document.getElementById('spinNotice').onclick = (event) => {
+  if (event.target.id === 'spinNotice') closeSpinNotice();
 };
 document.querySelectorAll('.tab').forEach(btn => btn.onclick = () => {
   document.querySelectorAll('.tab').forEach(tab => tab.classList.toggle('active', tab === btn));
