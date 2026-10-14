@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>جمعية 28,500</title>
+<title>جمعية 31,500</title>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
   :root{
@@ -81,6 +81,10 @@
   .paid-list{max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:4px 12px}
   .paid-list .is-exempt{cursor:default}
   .exempt-tag{color:var(--accent);font-weight:800}
+  .paid-split{margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg)}
+  .paid-split p{margin:0 0 6px}
+  .paid-split ul{list-style:none;margin:0;padding:0}
+  .paid-split li{display:flex;justify-content:space-between;gap:10px;font-weight:700;padding:3px 0}
   .paid-total{font-size:1.15rem;font-weight:800;margin:14px 0 4px}
   .paid-total b{color:var(--accent)}
   .grid2{display:grid;gap:18px}
@@ -88,8 +92,8 @@
 </head>
 <body>
 <header>
-  <h1 id="title">جمعية الـ 28,500</h1>
-  <p id="intro">السلفة 28,500 شهرياً — تبدأ <bdi>1-10-2026</bdi></p>
+  <h1 id="title">جمعية الـ 31,500</h1>
+  <p id="intro">السلفة 31,500 شهرياً — تبدأ <bdi>1-10-2026</bdi></p>
   <div class="sync wait" id="syncStatus">جاري الاتصال بقاعدة البيانات…</div>
   <a class="sync-help" id="syncHelp" href="https://console.firebase.google.com/project/al-taawun-pharmacies-reports/firestore" target="_blank" rel="noopener" hidden>فتح Cloud Firestore في لوحة Firebase</a>
 </header>
@@ -155,6 +159,7 @@
     <h2 id="paidTitle">من دفع</h2>
     <p class="note" id="paidLead">علّم كل من سلّم حصته لهذا الشهر.</p>
     <select class="month-pick" id="paidMonth"></select>
+    <div class="paid-split" id="paidSplit" hidden></div>
     <div class="paid-list" id="paidList"></div>
     <p class="paid-total">المبلغ الواصل: <b id="paidSum">0</b> من <span id="paidGoal">0</span></p>
     <p class="note" id="paidLeft"></p>
@@ -176,7 +181,7 @@ const firebaseConfig = {
   measurementId: "G-QG22G3J6J4"
 };
 
-let POT = 28500, MONTHS_COUNT = 10;
+let POT = 31500, MONTHS_COUNT = 11;
 let startYear = 2026, startMonth = 9;
 const SHARES = [
   {n:1,  m:[['ايات',2000],['علي',1000]]},
@@ -189,6 +194,7 @@ const SHARES = [
   {n:8,  m:[['زينة',1500],['علي الطويل',1500]]},
   {n:9,  m:[['ايناس',500],['دعاء',1500],['حسن',1000]]},
   {n:10, m:[['دندون',3000]]},
+  {n:11, m:[['صديق دندون',3000]]},
 ];
 const MONTH_NAMES = ['كانون الثاني','شباط','آذار','نيسان','أيار','حزيران','تموز','آب','أيلول','تشرين الأول','تشرين الثاني','كانون الأول'];
 function monthDate(i){
@@ -219,15 +225,23 @@ function syncPot(){
 function fullShare(){
   return SHARES.reduce((max, share) => Math.max(max, shareSum(share)), 0);
 }
-function grossReceipt(share, amt){
+function ownPayments(name){
+  return payerRows().filter(row => row.name === name).reduce((sum, row) => sum + row.amt, 0);
+}
+function receiptPool(share){
   const full = fullShare();
-  return full ? Math.round(amt / full * POT) : 0;
+  if (!share || !full) return 0;
+  return Math.round(shareSum(share) / full * POT);
+}
+function grossPortion(share, amt){
+  const total = shareSum(share);
+  return total ? Math.round(amt / total * receiptPool(share)) : 0;
+}
+function netReceipt(share, name, amt){
+  return grossPortion(share, amt) - ownPayments(name);
 }
 function shareReceipt(share){
-  return share.m.reduce((sum, [, amt]) => sum + grossReceipt(share, amt), 0);
-}
-function netOf(share, amt){
-  return grossReceipt(share, amt) - amt;
+  return share.m.reduce((sum, [name, amt]) => sum + netReceipt(share, name, amt), 0);
 }
 const byN = n => SHARES.find(s => s.n === n);
 const names = s => s.m.map(x => x[0]).join(' + ');
@@ -274,10 +288,33 @@ function currentMonthIndex(){
   if (idx >= MONTHS_COUNT) idx = MONTHS_COUNT - 1;
   return idx;
 }
-function winnerKeys(idx){
-  const share = drawn[idx] ? byN(drawn[idx]) : null;
-  if (!share) return new Set();
-  return new Set(payerRows().filter(row => row.share === share.n).map(row => row.key));
+function winningShare(idx){
+  return drawn[idx] ? byN(drawn[idx]) : null;
+}
+function winnerNames(idx){
+  const share = winningShare(idx);
+  return new Set(share ? share.m.map(([name]) => name) : []);
+}
+function duesFor(share){
+  const won = new Set(share.m.map(([name]) => name));
+  const rows = payerRows().filter(row => !won.has(row.name));
+  const goal = shareReceipt(share);
+  const base = rows.reduce((sum, row) => sum + row.amt, 0);
+  let used = 0;
+  return rows.map((row, i) => {
+    const due = i === rows.length - 1 || !base ? goal - used : Math.round(row.amt / base * goal);
+    used += due;
+    return { ...row, due };
+  });
+}
+function totalPaid(name, amt, shareN){
+  let total = 0;
+  SHARES.forEach(winShare => {
+    if (winShare.m.some(([person]) => person === name)) return;
+    const row = duesFor(winShare).find(item => item.name === name && item.amt === amt && item.share === shareN);
+    if (row) total += row.due;
+  });
+  return total;
 }
 function monthPaid(idx){
   const bag = paid[String(idx)];
@@ -310,26 +347,39 @@ function renderPaidList(){
   select.value = [...select.options].some(opt => opt.value === chosen) ? chosen : String(currentMonthIndex());
   const idx = select.value;
   const marks = monthPaid(idx);
-  const winners = winnerKeys(idx);
-  const rows = payerRows().slice().sort((a, b) => Number(winners.has(b.key)) - Number(winners.has(a.key)));
-  const share = drawn[idx] ? byN(drawn[idx]) : null;
-  document.getElementById('paidLead').textContent = share
-    ? 'من ظهر اسمه (' + names(share) + ') لا يدفع، ومبلغه محسوب ضمن الواصل. علّم الباقين.'
-    : 'لم يظهر اسم هذا الشهر بعد، فيدفع الجميع. علّم كل من سلّم حصته.';
+  const share = winningShare(idx);
+  const half = share && shareSum(share) * 2 === fullShare();
+  const rows = share ? duesFor(share) : payerRows().map(row => ({ ...row, due: row.amt }));
+  document.getElementById('paidLead').textContent = !share
+    ? 'لم يظهر اسم هذا الشهر بعد، فيدفع الجميع مبلغهم الكامل.'
+    : half
+      ? 'مشاركة نصف. الفائزون خارج القائمة، والصافي بعد طرح كل حصصهم من نصف السلفة.'
+      : 'الفائزون خارج القائمة. أي حصة أخرى لهم تُنقص من الصافي ولا تُعلَّم هنا.';
+  const split = document.getElementById('paidSplit');
+  if (!share){
+    split.hidden = true;
+    split.innerHTML = '';
+  } else {
+    const lines = share.m.map(([name, amt]) => '<li><span>' + esc(name) + '</span><b>' + fmt(netReceipt(share, name, amt)) + '</b></li>').join('');
+    split.hidden = false;
+    split.innerHTML = share.m.length > 1
+      ? '<p>التوزيع الصافي</p><ul>' + lines + '</ul><p>ما يسلّمه الباقون <b>' + fmt(shareReceipt(share)) + '</b></p>'
+      : '<p><b>' + esc(share.m[0][0]) + '</b> يستلم صافياً <b>' + fmt(netReceipt(share, share.m[0][0], share.m[0][1])) + '</b></p>';
+  }
   const list = document.getElementById('paidList');
   list.innerHTML = '';
   let arrived = 0;
+  let goal = 0;
   rows.forEach(row => {
-    const exempt = winners.has(row.key);
-    if (exempt || marks[row.key]) arrived += row.amt;
+    const due = row.due;
+    goal += due;
+    if (marks[row.key]) arrived += due;
     const label = document.createElement('label');
-    label.className = exempt ? 'check is-exempt' : 'check';
+    label.className = 'check';
     const input = document.createElement('input');
     input.type = 'checkbox';
-    input.checked = exempt || !!marks[row.key];
-    input.disabled = exempt;
+    input.checked = !!marks[row.key];
     input.onchange = () => {
-      if (exempt) return;
       if (!paid[idx] || typeof paid[idx] !== 'object') paid[idx] = {};
       if (input.checked) paid[idx][row.key] = true;
       else delete paid[idx][row.key];
@@ -337,24 +387,19 @@ function renderPaidList(){
       renderPaidList();
     };
     const sameName = payerRows().filter(item => item.name === row.name).length > 1;
+    let text = row.name + (sameName ? ' — مشاركة ' + row.share : '') + ' — ' + fmt(due);
+    if (due !== row.amt) text += ' بدل ' + fmt(row.amt);
     label.appendChild(input);
-    label.appendChild(document.createTextNode(row.name + (sameName ? ' — مشاركة ' + row.share : '') + ' — ' + fmt(row.amt)));
-    if (exempt){
-      const tag = document.createElement('span');
-      tag.className = 'exempt-tag';
-      tag.textContent = 'لا يدفع';
-      label.appendChild(tag);
-    }
+    label.appendChild(document.createTextNode(text));
     list.appendChild(label);
   });
   document.getElementById('paidSum').textContent = fmt(arrived);
-  document.getElementById('paidGoal').textContent = fmt(POT);
-  const left = POT - arrived;
+  document.getElementById('paidGoal').textContent = fmt(goal);
+  const left = goal - arrived;
   document.getElementById('paidLeft').textContent = left > 0
     ? 'المتبقي ' + fmt(left)
-    : 'اكتمل مبلغ السلفة لهذا الشهر.';
-  const payable = rows.filter(row => !winners.has(row.key));
-  document.getElementById('paidAll').textContent = payable.length && payable.every(row => marks[row.key]) ? 'إلغاء التحديد' : 'تحديد الكل';
+    : 'اكتمل ما يسلّمه الباقون.';
+  document.getElementById('paidAll').textContent = rows.length && rows.every(row => marks[row.key]) ? 'إلغاء التحديد' : 'تحديد الكل';
 }
 function openPaid(){
   renderPaidList();
@@ -735,15 +780,15 @@ function renderDraws(){
 function renderTables(){
   syncPot();
   const note = document.getElementById('peopleNote');
-  if (note) note.textContent = 'القبض بنسبة الحصة من المشاركة الكاملة ' + fmt(fullShare()) + '. المشاركة الناقصة تقبض أقل.';
+  if (note) note.textContent = 'صافي القبض بعد طرح كل حصص الفائز. الحصة النصف تستلم نصف السلفة ثم تُطرح حصص أصحابها.';
   let peopleHtml = `<thead><tr><th>المشاركة</th><th>الاسم</th><th>يدفع شهرياً</th><th>مجموع ما يدفعه</th><th>صافي القبض</th></tr></thead><tbody>`;
   SHARES.forEach(share => {
     const idx = drawn.indexOf(share.n);
     share.m.forEach(([name, amt], j) => {
-      const rec = fmt(netOf(share, amt)) + (idx >= 0 ? ' في ' + monthLabel(idx) : ' — الشهر يُحدد لاحقاً');
+      const rec = fmt(netReceipt(share, name, amt)) + (idx >= 0 ? ' في ' + monthLabel(idx) : ' — الشهر يُحدد لاحقاً');
       peopleHtml += `<tr class="${j === 0 ? 'share-start' : ''}">`;
       if (j === 0) peopleHtml += `<td rowspan="${share.m.length}">${share.n}</td>`;
-      peopleHtml += `<td>${esc(name)}</td><td class="num">${fmt(amt)}</td><td class="num">${fmt(amt * MONTHS_COUNT)}</td><td>${esc(rec)}</td></tr>`;
+      peopleHtml += `<td>${esc(name)}</td><td class="num">${fmt(amt)}</td><td class="num">${fmt(totalPaid(name, amt, share.n))}</td><td>${esc(rec)}</td></tr>`;
     });
   });
   peopleHtml += `</tbody>`;
@@ -871,8 +916,8 @@ document.getElementById('paidClose').onclick = closePaid;
 document.getElementById('paidMonth').onchange = renderPaidList;
 document.getElementById('paidAll').onclick = () => {
   const idx = document.getElementById('paidMonth').value;
-  const winners = winnerKeys(idx);
-  const rows = payerRows().filter(row => !winners.has(row.key));
+  const won = winnerNames(idx);
+  const rows = payerRows().filter(row => !won.has(row.name));
   const marks = monthPaid(idx);
   const allOn = rows.length && rows.every(row => marks[row.key]);
   paid[idx] = {};
