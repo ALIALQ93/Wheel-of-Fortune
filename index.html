@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>جمعية 30,000</title>
+<title>جمعية 28,500</title>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
   :root{
@@ -75,13 +75,21 @@
   .note{color:var(--muted);font-size:.9rem;margin:0 0 12px}
   #gateNote{text-align:center;margin:12px 0 0}
   .pending-name{color:var(--muted)}
+  .paid-card{width:min(520px,100%)}
+  .month-pick,.paid-list{width:100%}
+  .month-pick{font:inherit;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--ink);margin:0 0 12px}
+  .paid-list{max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:4px 12px}
+  .paid-list .is-exempt{cursor:default}
+  .exempt-tag{color:var(--accent);font-weight:800}
+  .paid-total{font-size:1.15rem;font-weight:800;margin:14px 0 4px}
+  .paid-total b{color:var(--accent)}
   .grid2{display:grid;gap:18px}
 </style>
 </head>
 <body>
 <header>
-  <h1>جمعية الـ 30,000</h1>
-  <p id="intro">10 مشاركات × 3,000 شهرياً — تبدأ <bdi>1-10-2026</bdi></p>
+  <h1 id="title">جمعية الـ 28,500</h1>
+  <p id="intro">السلفة 28,500 شهرياً — تبدأ <bdi>1-10-2026</bdi></p>
   <div class="sync wait" id="syncStatus">جاري الاتصال بقاعدة البيانات…</div>
   <a class="sync-help" id="syncHelp" href="https://console.firebase.google.com/project/al-taawun-pharmacies-reports/firestore" target="_blank" rel="noopener" hidden>فتح Cloud Firestore في لوحة Firebase</a>
 </header>
@@ -101,9 +109,10 @@
         </div>
         <div class="btns">
           <button class="main" id="spin">أدِر العجلة</button>
+          <button class="ghost" id="paidBtn" type="button">من دفع</button>
         </div>
         <p class="note" id="gateNote"></p>
-        <div class="result" id="result">المشاركة الأولى (ايات) ثابتة لشهر تشرين الأول 2026</div>
+        <div class="result" id="result">المشاركة الأولى (ايات + علي) ثابتة لشهر تشرين الأول 2026</div>
       </div>
       <div class="card">
         <h2>نتيجة القرعة</h2>
@@ -114,11 +123,6 @@
 
   <section class="panel" id="list">
     <div class="grid2">
-      <div class="card">
-        <h2>توزيع المشاركات</h2>
-        <p class="note" id="orderNote"></p>
-        <div class="table-scroll"><table id="sharesTable"></table></div>
-      </div>
       <div class="card">
         <h2>ملخص كل شخص</h2>
         <p class="note">كل صف يبيّن مع من يشترك في نفس المشاركة.</p>
@@ -146,6 +150,21 @@
   </div>
 </div>
 
+<div class="notice" id="paidNotice" hidden>
+  <div class="notice-card paid-card" role="dialog" aria-modal="true" aria-labelledby="paidTitle">
+    <h2 id="paidTitle">من دفع</h2>
+    <p class="note" id="paidLead">علّم كل من سلّم حصته لهذا الشهر.</p>
+    <select class="month-pick" id="paidMonth"></select>
+    <div class="paid-list" id="paidList"></div>
+    <p class="paid-total">المبلغ الواصل: <b id="paidSum">0</b> من <span id="paidGoal">0</span></p>
+    <p class="note" id="paidLeft"></p>
+    <div class="btns">
+      <button class="ghost" id="paidAll" type="button">تحديد الكل</button>
+      <button class="ghost" id="paidClose" type="button">إغلاق</button>
+    </div>
+  </div>
+</div>
+
 <script type="module">
 const firebaseConfig = {
   apiKey: "AIzaSyAzU_xSW4UAAqrdG-CSXqSsqzwLmsNjRUk",
@@ -157,15 +176,15 @@ const firebaseConfig = {
   measurementId: "G-QG22G3J6J4"
 };
 
-let POT = 30000, MONTHS_COUNT = 10;
+let POT = 28500, MONTHS_COUNT = 10;
 let startYear = 2026, startMonth = 9;
 const SHARES = [
-  {n:1,  m:[['ايات',3000]]},
+  {n:1,  m:[['ايات',2000],['علي',1000]]},
   {n:2,  m:[['خليل',1000],['ايمن',2000]]},
   {n:3,  m:[['احمد احسان',3000]]},
   {n:4,  m:[['اواب',3000]]},
   {n:5,  m:[['سارة',3000]]},
-  {n:6,  m:[['احمد سعد',1000],['علي',500],['احمد احسان',1500]]},
+  {n:6,  m:[['احمد سعد',1000],['علي',500]]},
   {n:7,  m:[['محمد اتصالات',3000]]},
   {n:8,  m:[['زينة',1500],['علي الطويل',1500]]},
   {n:9,  m:[['ايناس',500],['دعاء',1500],['حسن',1000]]},
@@ -186,12 +205,30 @@ function canOpenWheel(){
   return today >= monthDate(drawn.length);
 }
 const fmt = n => n.toLocaleString('en-US');
+function shareSum(share){
+  return share.m.reduce((sum, [, amt]) => sum + amt, 0);
+}
+function syncPot(){
+  POT = SHARES.reduce((sum, share) => sum + shareSum(share), 0);
+  document.title = 'جمعية ' + fmt(POT);
+  const title = document.getElementById('title');
+  if (title) title.textContent = 'جمعية الـ ' + fmt(POT);
+  const intro = document.getElementById('intro');
+  if (intro) intro.innerHTML = 'السلفة ' + fmt(POT) + ' شهرياً — تبدأ <bdi>1-' + (startMonth + 1) + '-' + startYear + '</bdi>';
+}
+function grossReceipt(share, amt){
+  const total = shareSum(share);
+  return total ? Math.round(amt / total * POT) : 0;
+}
+function netOf(share, amt){
+  return grossReceipt(share, amt) - amt;
+}
 const byN = n => SHARES.find(s => s.n === n);
 const names = s => s.m.map(x => x[0]).join(' + ');
 const esc = s => String(s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 function fixedShareMessage(){
   const share = byN(1);
-  const who = share ? names(share) : 'ايات';
+  const who = share ? names(share) : 'ايات + علي';
   return `المشاركة الأولى (${who}) ثابتة لشهر ${monthLabel(0)}`;
 }
 
@@ -205,6 +242,121 @@ let pendingSnap = null;
 let pendingConfig = null;
 let db = null;
 let fs = null;
+const PAID_KEY = 'jamiya30000-paid';
+let paid = {};
+try {
+  const savedPaid = JSON.parse(localStorage.getItem(PAID_KEY));
+  if (savedPaid && typeof savedPaid === 'object') paid = savedPaid;
+} catch (e) {}
+
+function payerRows(){
+  const rows = [];
+  const count = {};
+  SHARES.forEach(share => share.m.forEach(([name, amt]) => {
+    const base = share.n + '|' + name + '|' + amt;
+    count[base] = (count[base] || 0) + 1;
+    rows.push({ key: base + '|' + count[base], name, amt, share: share.n });
+  }));
+  return rows;
+}
+function currentMonthIndex(){
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), 1);
+  const start = monthDate(0);
+  let idx = (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth());
+  if (today < start || idx < 0) idx = 0;
+  if (idx >= MONTHS_COUNT) idx = MONTHS_COUNT - 1;
+  return idx;
+}
+function winnerKeys(idx){
+  const share = drawn[idx] ? byN(drawn[idx]) : null;
+  if (!share) return new Set();
+  return new Set(payerRows().filter(row => row.share === share.n).map(row => row.key));
+}
+function monthPaid(idx){
+  const bag = paid[String(idx)];
+  return bag && typeof bag === 'object' ? bag : {};
+}
+function persistPaidLocal(){
+  try { localStorage.setItem(PAID_KEY, JSON.stringify(paid)); } catch (e) {}
+}
+function savePaid(){
+  persistPaidLocal();
+  if (!db || !fs) return;
+  fs.setDoc(fs.doc(db, 'jamiya30000', 'payments'), {
+    months: paid,
+    updatedAt: fs.serverTimestamp()
+  }).catch(() => {});
+}
+function renderPaidList(){
+  syncPot();
+  const select = document.getElementById('paidMonth');
+  const chosen = select.value || String(currentMonthIndex());
+  if (select.options.length !== MONTHS_COUNT){
+    select.innerHTML = '';
+    for (let i = 0; i < MONTHS_COUNT; i++){
+      const opt = document.createElement('option');
+      opt.value = String(i);
+      opt.textContent = monthLabel(i);
+      select.appendChild(opt);
+    }
+  }
+  select.value = [...select.options].some(opt => opt.value === chosen) ? chosen : String(currentMonthIndex());
+  const idx = select.value;
+  const marks = monthPaid(idx);
+  const winners = winnerKeys(idx);
+  const rows = payerRows().slice().sort((a, b) => Number(winners.has(b.key)) - Number(winners.has(a.key)));
+  const share = drawn[idx] ? byN(drawn[idx]) : null;
+  document.getElementById('paidLead').textContent = share
+    ? 'من ظهر اسمه (' + names(share) + ') لا يدفع، ومبلغه محسوب ضمن الواصل. علّم الباقين.'
+    : 'لم يظهر اسم هذا الشهر بعد، فيدفع الجميع. علّم كل من سلّم حصته.';
+  const list = document.getElementById('paidList');
+  list.innerHTML = '';
+  let arrived = 0;
+  rows.forEach(row => {
+    const exempt = winners.has(row.key);
+    if (exempt || marks[row.key]) arrived += row.amt;
+    const label = document.createElement('label');
+    label.className = exempt ? 'check is-exempt' : 'check';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = exempt || !!marks[row.key];
+    input.disabled = exempt;
+    input.onchange = () => {
+      if (exempt) return;
+      if (!paid[idx] || typeof paid[idx] !== 'object') paid[idx] = {};
+      if (input.checked) paid[idx][row.key] = true;
+      else delete paid[idx][row.key];
+      savePaid();
+      renderPaidList();
+    };
+    const sameName = payerRows().filter(item => item.name === row.name).length > 1;
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(row.name + (sameName ? ' — مشاركة ' + row.share : '') + ' — ' + fmt(row.amt)));
+    if (exempt){
+      const tag = document.createElement('span');
+      tag.className = 'exempt-tag';
+      tag.textContent = 'لا يدفع';
+      label.appendChild(tag);
+    }
+    list.appendChild(label);
+  });
+  document.getElementById('paidSum').textContent = fmt(arrived);
+  document.getElementById('paidGoal').textContent = fmt(POT);
+  const left = POT - arrived;
+  document.getElementById('paidLeft').textContent = left > 0
+    ? 'المتبقي ' + fmt(left)
+    : 'اكتمل مبلغ السلفة لهذا الشهر.';
+  const payable = rows.filter(row => !winners.has(row.key));
+  document.getElementById('paidAll').textContent = payable.length && payable.every(row => marks[row.key]) ? 'إلغاء التحديد' : 'تحديد الكل';
+}
+function openPaid(){
+  renderPaidList();
+  document.getElementById('paidNotice').hidden = false;
+}
+function closePaid(){
+  document.getElementById('paidNotice').hidden = true;
+}
 
 function sanitizeDrawn(arr){
   const valid = [];
@@ -310,13 +462,11 @@ function applyConfig(data){
     startYear = Number(match[1]);
     startMonth = month - 1;
   }
-  if (Number.isFinite(data.pot) && data.pot > 0) POT = data.pot;
   MONTHS_COUNT = months;
   next.sort((a, b) => a.n - b.n);
   SHARES.splice(0, SHARES.length, ...next);
   drawn = sanitizeDrawn(drawn);
-  const intro = document.getElementById('intro');
-  intro.innerHTML = MONTHS_COUNT + ' مشاركات × ' + fmt(POT / MONTHS_COUNT) + ' شهرياً — تبدأ <bdi>1-' + (startMonth + 1) + '-' + startYear + '</bdi>';
+  syncPot();
   return true;
 }
 
@@ -577,31 +727,15 @@ function renderDraws(){
 }
 
 function renderTables(){
-  document.getElementById('orderNote').textContent = 'عمود الشهر يعرض الأشهر التي حددتها القرعة فقط.';
-
-  let html = `<thead><tr><th>الشهر</th><th>المشاركة</th><th>الاسم</th><th>الدفع الشهري</th><th>حصته من القبض</th></tr></thead><tbody>`;
-  let total = 0;
-  for (let i = 0; i < drawn.length; i++){
-    const share = byN(drawn[i]);
-    if (!share) continue;
-    share.m.forEach(([name, amt], j) => {
-      total += amt;
-      html += `<tr class="${j === 0 ? 'share-start' : ''}">`;
-      if (j === 0) html += `<td rowspan="${share.m.length}" class="month">${esc(monthLabel(i))}</td><td rowspan="${share.m.length}">${share.n}</td>`;
-      html += `<td>${esc(name)}</td><td class="num">${fmt(amt)}</td><td class="num">${fmt(amt * MONTHS_COUNT)}</td></tr>`;
-    });
-  }
-  html += `</tbody><tfoot><tr><td colspan="3">المجموع الشهري</td><td class="num">${fmt(total)}</td><td></td></tr></tfoot>`;
-  document.getElementById('sharesTable').innerHTML = html;
-
-  let peopleHtml = `<thead><tr><th>المشاركة</th><th>الاسم</th><th>يشترك مع</th><th>يدفع شهرياً</th><th>مجموع ما يدفعه</th><th>يقبض</th></tr></thead><tbody>`;
+  syncPot();
+  let peopleHtml = `<thead><tr><th>المشاركة</th><th>الاسم</th><th>يشترك مع</th><th>يدفع شهرياً</th><th>مجموع ما يدفعه</th><th>صافي القبض</th></tr></thead><tbody>`;
   SHARES.forEach(share => {
     const idx = drawn.indexOf(share.n);
     const allNames = share.m.map(([name]) => name);
     share.m.forEach(([name, amt], j) => {
       const others = allNames.filter(person => person !== name);
       const link = others.length ? others.join(' + ') : 'منفرد';
-      const rec = idx >= 0 ? fmt(amt * MONTHS_COUNT) + ' في ' + monthLabel(idx) : 'يُحدد لاحقاً';
+      const rec = fmt(netOf(share, amt)) + (idx >= 0 ? ' في ' + monthLabel(idx) : ' — الشهر يُحدد لاحقاً');
       peopleHtml += `<tr class="${j === 0 ? 'share-start' : ''}">`;
       if (j === 0) peopleHtml += `<td rowspan="${share.m.length}">${share.n}</td>`;
       peopleHtml += `<td>${esc(name)}</td><td>${esc(link)}</td><td class="num">${fmt(amt)}</td><td class="num">${fmt(amt * MONTHS_COUNT)}</td><td>${esc(rec)}</td></tr>`;
@@ -658,12 +792,7 @@ async function connectFirebase(){
     }
   }
   try {
-    const cfg = await withTimeout(fs.getDocFromServer(configDoc()), 8000);
-    if (!cfg.exists()){
-      await fs.setDoc(configDoc(), { ...configPayload(), updatedAt: fs.serverTimestamp() });
-    } else if (applyConfig(cfg.data())) {
-      render();
-    }
+    await withTimeout(fs.setDoc(configDoc(), { ...configPayload(), updatedAt: fs.serverTimestamp() }), 8000);
   } catch (e) {}
 
   const live = { includeMetadataChanges: true };
@@ -671,6 +800,14 @@ async function connectFirebase(){
     if (!fromServer(snap) || !snap.exists()) return;
     if (spinning){ pendingConfig = snap.data(); return; }
     if (applyConfig(snap.data())) render();
+  }, () => {});
+  fs.onSnapshot(fs.doc(db, 'jamiya30000', 'payments'), (snap) => {
+    if (!fromServer(snap) || !snap.exists()) return;
+    const months = snap.data().months;
+    if (!months || typeof months !== 'object') return;
+    paid = months;
+    persistPaidLocal();
+    if (!document.getElementById('paidNotice').hidden) renderPaidList();
   }, () => {});
   fs.onSnapshot(stateDoc(), live, (snap) => {
     if (!fromServer(snap)){
@@ -723,6 +860,23 @@ document.getElementById('noticeGo').onclick = () => {
 };
 document.getElementById('spinNotice').onclick = (event) => {
   if (event.target.id === 'spinNotice') closeSpinNotice();
+};
+document.getElementById('paidBtn').onclick = openPaid;
+document.getElementById('paidClose').onclick = closePaid;
+document.getElementById('paidMonth').onchange = renderPaidList;
+document.getElementById('paidAll').onclick = () => {
+  const idx = document.getElementById('paidMonth').value;
+  const winners = winnerKeys(idx);
+  const rows = payerRows().filter(row => !winners.has(row.key));
+  const marks = monthPaid(idx);
+  const allOn = rows.length && rows.every(row => marks[row.key]);
+  paid[idx] = {};
+  if (!allOn) rows.forEach(row => { paid[idx][row.key] = true; });
+  savePaid();
+  renderPaidList();
+};
+document.getElementById('paidNotice').onclick = (event) => {
+  if (event.target.id === 'paidNotice') closePaid();
 };
 document.querySelectorAll('.tab').forEach(btn => btn.onclick = () => {
   document.querySelectorAll('.tab').forEach(tab => tab.classList.toggle('active', tab === btn));
