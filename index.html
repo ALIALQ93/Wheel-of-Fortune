@@ -125,7 +125,7 @@
     <div class="grid2">
       <div class="card">
         <h2>ملخص كل شخص</h2>
-        <p class="note">كل صف يبيّن مع من يشترك في نفس المشاركة.</p>
+        <p class="note" id="peopleNote">القبض بنسبة الحصة من المشاركة الكاملة.</p>
         <div class="table-scroll"><table id="peopleTable"></table></div>
       </div>
     </div>
@@ -216,9 +216,15 @@ function syncPot(){
   const intro = document.getElementById('intro');
   if (intro) intro.innerHTML = 'السلفة ' + fmt(POT) + ' شهرياً — تبدأ <bdi>1-' + (startMonth + 1) + '-' + startYear + '</bdi>';
 }
+function fullShare(){
+  return SHARES.reduce((max, share) => Math.max(max, shareSum(share)), 0);
+}
 function grossReceipt(share, amt){
-  const total = shareSum(share);
-  return total ? Math.round(amt / total * POT) : 0;
+  const full = fullShare();
+  return full ? Math.round(amt / full * POT) : 0;
+}
+function shareReceipt(share){
+  return share.m.reduce((sum, [, amt]) => sum + grossReceipt(share, amt), 0);
 }
 function netOf(share, amt){
   return grossReceipt(share, amt) - amt;
@@ -584,7 +590,7 @@ function applySnap(snap){
       const share = byN(nextLast);
       const idx = drawn.lastIndexOf(nextLast);
       box.innerHTML = share && idx >= 0
-        ? `آخر نتيجة: <b>${esc(names(share))}</b><br>يقبض في ${esc(monthLabel(idx))} — ${fmt(POT)}`
+        ? `آخر نتيجة: <b>${esc(names(share))}</b><br>يقبض في ${esc(monthLabel(idx))} — ${fmt(shareReceipt(share))}`
         : esc(fixedShareMessage());
     } else {
       box.textContent = fixedShareMessage();
@@ -671,7 +677,7 @@ async function finishSpin(win){
     heardRemote = true;
     if (committed.added){
       const idx = drawn.lastIndexOf(win.n);
-      box.innerHTML = `مبروك! <b>${esc(names(win))}</b><br>يقبض في ${esc(monthLabel(idx))} — ${fmt(POT)}`;
+      box.innerHTML = `مبروك! <b>${esc(names(win))}</b><br>يقبض في ${esc(monthLabel(idx))} — ${fmt(shareReceipt(win))}`;
     } else {
       box.textContent = 'لم تُحفظ نتيجة جديدة. حدّثت القائمة حسب قاعدة البيانات.';
     }
@@ -728,17 +734,16 @@ function renderDraws(){
 
 function renderTables(){
   syncPot();
-  let peopleHtml = `<thead><tr><th>المشاركة</th><th>الاسم</th><th>يشترك مع</th><th>يدفع شهرياً</th><th>مجموع ما يدفعه</th><th>صافي القبض</th></tr></thead><tbody>`;
+  const note = document.getElementById('peopleNote');
+  if (note) note.textContent = 'القبض بنسبة الحصة من المشاركة الكاملة ' + fmt(fullShare()) + '. المشاركة الناقصة تقبض أقل.';
+  let peopleHtml = `<thead><tr><th>المشاركة</th><th>الاسم</th><th>يدفع شهرياً</th><th>مجموع ما يدفعه</th><th>صافي القبض</th></tr></thead><tbody>`;
   SHARES.forEach(share => {
     const idx = drawn.indexOf(share.n);
-    const allNames = share.m.map(([name]) => name);
     share.m.forEach(([name, amt], j) => {
-      const others = allNames.filter(person => person !== name);
-      const link = others.length ? others.join(' + ') : 'منفرد';
       const rec = fmt(netOf(share, amt)) + (idx >= 0 ? ' في ' + monthLabel(idx) : ' — الشهر يُحدد لاحقاً');
       peopleHtml += `<tr class="${j === 0 ? 'share-start' : ''}">`;
       if (j === 0) peopleHtml += `<td rowspan="${share.m.length}">${share.n}</td>`;
-      peopleHtml += `<td>${esc(name)}</td><td>${esc(link)}</td><td class="num">${fmt(amt)}</td><td class="num">${fmt(amt * MONTHS_COUNT)}</td><td>${esc(rec)}</td></tr>`;
+      peopleHtml += `<td>${esc(name)}</td><td class="num">${fmt(amt)}</td><td class="num">${fmt(amt * MONTHS_COUNT)}</td><td>${esc(rec)}</td></tr>`;
     });
   });
   peopleHtml += `</tbody>`;
