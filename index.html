@@ -292,15 +292,25 @@ function winnerNames(idx){
   const share = winningShare(idx);
   return new Set(share ? share.m.map(([name]) => name) : []);
 }
+function personNet(share, amt){
+  return portionOfPot(share, amt) - amt;
+}
+function shareNet(share){
+  return share.m.reduce((sum, [, amt]) => sum + personNet(share, amt), 0);
+}
 function duesFor(share){
   const won = new Set(share.m.map(([name]) => name));
-  const full = fullSeat();
-  const seat = shareSum(share);
-  const partial = seat < full;
-  return payerRows().filter(row => !won.has(row.name)).map(row => ({
-    ...row,
-    due: partial && full ? Math.round(row.amt * seat / full) : row.amt
-  }));
+  const others = payerRows().filter(row => !won.has(row.name));
+  const base = others.reduce((sum, row) => sum + row.amt, 0);
+  const target = shareNet(share);
+  let assigned = 0;
+  return others.map((row, i) => {
+    const due = i === others.length - 1
+      ? target - assigned
+      : (base ? Math.round(row.amt * target / base) : 0);
+    assigned += due;
+    return { ...row, due };
+  });
 }
 function monthPaid(idx){
   const bag = paid[String(idx)];
@@ -337,19 +347,18 @@ function renderPaidList(){
   const rows = share ? duesFor(share) : payerRows().map(row => ({ ...row, due: row.amt }));
   const handed = rows.reduce((sum, row) => sum + row.due, 0);
   const receipt = share ? shareReceipt(share) : 0;
+  const net = share ? shareNet(share) : 0;
   document.getElementById('paidLead').textContent = !share
     ? 'لم يظهر اسم هذا الشهر بعد، فيدفع الجميع مبلغهم الكامل.'
-    : 'الفائزون خارج القائمة. المشاركة تستلم ' + fmt(receipt) + ' إذا حُسبت حصتها، والباقون يسلمون ' + fmt(handed) + '.';
+    : 'الفائزون خارج القائمة. صافي القبض ' + fmt(net) + ' بعد خصم الحصة من ' + fmt(receipt) + '، والباقون يسلمون ' + fmt(handed) + '.';
   const split = document.getElementById('paidSplit');
   if (!share){
     split.hidden = true;
     split.innerHTML = '';
   } else {
-    const lines = share.m.map(([name, amt]) => '<li><span>' + esc(name) + '</span><b>' + fmt(portionOfPot(share, amt)) + '</b></li>').join('');
+    const lines = share.m.map(([name, amt]) => '<li><span>' + esc(name) + '</span><b>' + fmt(portionOfPot(share, amt)) + ' − ' + fmt(amt) + ' = ' + fmt(personNet(share, amt)) + '</b></li>').join('');
     split.hidden = false;
-    split.innerHTML = share.m.length > 1
-      ? '<p>التوزيع إذا دفعت المشاركة حصتها</p><ul>' + lines + '</ul><p>مجموع المشاركة <b>' + fmt(receipt) + '</b></p><p>ما يسلّمه الباقون <b>' + fmt(handed) + '</b></p>'
-      : '<p><b>' + esc(share.m[0][0]) + '</b> يستلم <b>' + fmt(receipt) + '</b> إذا دفعت حصتها</p><p>ما يسلّمه الباقون <b>' + fmt(handed) + '</b></p>';
+    split.innerHTML = '<p>صافي القبض = مجموع ما يدفعه − مبلغ الحصة</p><ul>' + lines + '</ul><p>المجموع مع الحصة <b>' + fmt(receipt) + '</b></p><p>الصافي <b>' + fmt(net) + '</b></p><p>ما يسلّمه الباقون <b>' + fmt(handed) + '</b></p>';
   }
   const list = document.getElementById('paidList');
   list.innerHTML = '';
