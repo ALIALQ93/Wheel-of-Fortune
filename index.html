@@ -189,7 +189,7 @@ const SHARES = [
   {n:3,  m:[['احمد احسان',3000]]},
   {n:4,  m:[['اواب',3000]]},
   {n:5,  m:[['سارة',3000]]},
-  {n:6,  m:[['احمد سعد',1000],['علي',500]]},
+  {n:6,  m:[['احمد سعد',1000],['علي2',500]]},
   {n:7,  m:[['محمد اتصالات',3000]]},
   {n:8,  m:[['زينة',1500],['علي الطويل',1500]]},
   {n:9,  m:[['ايناس',500],['دعاء',1500],['حسن',1000]]},
@@ -222,26 +222,23 @@ function syncPot(){
   const intro = document.getElementById('intro');
   if (intro) intro.innerHTML = 'السلفة ' + fmt(POT) + ' شهرياً — تبدأ <bdi>1-' + (startMonth + 1) + '-' + startYear + '</bdi>';
 }
-function fullShare(){
+function fullSeat(){
   return SHARES.reduce((max, share) => Math.max(max, shareSum(share)), 0);
 }
-function ownPayments(name){
-  return payerRows().filter(row => row.name === name).reduce((sum, row) => sum + row.amt, 0);
+function sharePool(share){
+  const seat = shareSum(share);
+  const full = fullSeat();
+  if (!seat || !full) return 0;
+  if (seat >= full) return POT;
+  return seat * (MONTHS_COUNT - 1);
 }
-function receiptPool(share){
-  const full = fullShare();
-  if (!share || !full) return 0;
-  return Math.round(shareSum(share) / full * POT);
-}
-function grossPortion(share, amt){
+function portionOfPot(share, amt){
   const total = shareSum(share);
-  return total ? Math.round(amt / total * receiptPool(share)) : 0;
-}
-function netReceipt(share, name, amt){
-  return grossPortion(share, amt) - ownPayments(name);
+  const pool = sharePool(share);
+  return total ? Math.round(amt / total * pool) : 0;
 }
 function shareReceipt(share){
-  return share.m.reduce((sum, [name, amt]) => sum + netReceipt(share, name, amt), 0);
+  return sharePool(share);
 }
 const byN = n => SHARES.find(s => s.n === n);
 const names = s => s.m.map(x => x[0]).join(' + ');
@@ -297,24 +294,13 @@ function winnerNames(idx){
 }
 function duesFor(share){
   const won = new Set(share.m.map(([name]) => name));
-  const rows = payerRows().filter(row => !won.has(row.name));
-  const goal = shareReceipt(share);
-  const base = rows.reduce((sum, row) => sum + row.amt, 0);
-  let used = 0;
-  return rows.map((row, i) => {
-    const due = i === rows.length - 1 || !base ? goal - used : Math.round(row.amt / base * goal);
-    used += due;
-    return { ...row, due };
-  });
-}
-function totalPaid(name, amt, shareN){
-  let total = 0;
-  SHARES.forEach(winShare => {
-    if (winShare.m.some(([person]) => person === name)) return;
-    const row = duesFor(winShare).find(item => item.name === name && item.amt === amt && item.share === shareN);
-    if (row) total += row.due;
-  });
-  return total;
+  const full = fullSeat();
+  const seat = shareSum(share);
+  const partial = seat < full;
+  return payerRows().filter(row => !won.has(row.name)).map(row => ({
+    ...row,
+    due: partial && full ? Math.round(row.amt * seat / full) : row.amt
+  }));
 }
 function monthPaid(idx){
   const bag = paid[String(idx)];
@@ -348,23 +334,22 @@ function renderPaidList(){
   const idx = select.value;
   const marks = monthPaid(idx);
   const share = winningShare(idx);
-  const half = share && shareSum(share) * 2 === fullShare();
   const rows = share ? duesFor(share) : payerRows().map(row => ({ ...row, due: row.amt }));
+  const handed = rows.reduce((sum, row) => sum + row.due, 0);
+  const receipt = share ? shareReceipt(share) : 0;
   document.getElementById('paidLead').textContent = !share
     ? 'لم يظهر اسم هذا الشهر بعد، فيدفع الجميع مبلغهم الكامل.'
-    : half
-      ? 'مشاركة نصف. الفائزون خارج القائمة، والصافي بعد طرح كل حصصهم من نصف السلفة.'
-      : 'الفائزون خارج القائمة. أي حصة أخرى لهم تُنقص من الصافي ولا تُعلَّم هنا.';
+    : 'الفائزون خارج القائمة. المشاركة تستلم ' + fmt(receipt) + ' إذا حُسبت حصتها، والباقون يسلمون ' + fmt(handed) + '.';
   const split = document.getElementById('paidSplit');
   if (!share){
     split.hidden = true;
     split.innerHTML = '';
   } else {
-    const lines = share.m.map(([name, amt]) => '<li><span>' + esc(name) + '</span><b>' + fmt(netReceipt(share, name, amt)) + '</b></li>').join('');
+    const lines = share.m.map(([name, amt]) => '<li><span>' + esc(name) + '</span><b>' + fmt(portionOfPot(share, amt)) + '</b></li>').join('');
     split.hidden = false;
     split.innerHTML = share.m.length > 1
-      ? '<p>التوزيع الصافي</p><ul>' + lines + '</ul><p>ما يسلّمه الباقون <b>' + fmt(shareReceipt(share)) + '</b></p>'
-      : '<p><b>' + esc(share.m[0][0]) + '</b> يستلم صافياً <b>' + fmt(netReceipt(share, share.m[0][0], share.m[0][1])) + '</b></p>';
+      ? '<p>التوزيع إذا دفعت المشاركة حصتها</p><ul>' + lines + '</ul><p>مجموع المشاركة <b>' + fmt(receipt) + '</b></p><p>ما يسلّمه الباقون <b>' + fmt(handed) + '</b></p>'
+      : '<p><b>' + esc(share.m[0][0]) + '</b> يستلم <b>' + fmt(receipt) + '</b> إذا دفعت حصتها</p><p>ما يسلّمه الباقون <b>' + fmt(handed) + '</b></p>';
   }
   const list = document.getElementById('paidList');
   list.innerHTML = '';
@@ -780,15 +765,18 @@ function renderDraws(){
 function renderTables(){
   syncPot();
   const note = document.getElementById('peopleNote');
-  if (note) note.textContent = 'صافي القبض بعد طرح كل حصص الفائز. الحصة النصف تستلم نصف السلفة ثم تُطرح حصص أصحابها.';
+  const partialNote = SHARES.filter(share => shareSum(share) < fullSeat())
+    .map(share => names(share) + ' ' + fmt(sharePool(share))).join('، ');
+  if (note) note.textContent = 'المشاركة الكاملة مجموعها مع حصتها ' + fmt(POT) + (partialNote ? '. المشاركة الناقصة: ' + partialNote : '') + '. صافي القبض هو المجموع ناقص مبلغ الحصة.';
   let peopleHtml = `<thead><tr><th>المشاركة</th><th>الاسم</th><th>يدفع شهرياً</th><th>مجموع ما يدفعه</th><th>صافي القبض</th></tr></thead><tbody>`;
   SHARES.forEach(share => {
     const idx = drawn.indexOf(share.n);
     share.m.forEach(([name, amt], j) => {
-      const rec = fmt(netReceipt(share, name, amt)) + (idx >= 0 ? ' في ' + monthLabel(idx) : ' — الشهر يُحدد لاحقاً');
+      const got = portionOfPot(share, amt);
+      const rec = fmt(got - amt) + (idx >= 0 ? ' في ' + monthLabel(idx) : '');
       peopleHtml += `<tr class="${j === 0 ? 'share-start' : ''}">`;
       if (j === 0) peopleHtml += `<td rowspan="${share.m.length}">${share.n}</td>`;
-      peopleHtml += `<td>${esc(name)}</td><td class="num">${fmt(amt)}</td><td class="num">${fmt(totalPaid(name, amt, share.n))}</td><td>${esc(rec)}</td></tr>`;
+      peopleHtml += `<td>${esc(name)}</td><td class="num">${fmt(amt)}</td><td class="num">${fmt(got)}</td><td>${esc(rec)}</td></tr>`;
     });
   });
   peopleHtml += `</tbody>`;
