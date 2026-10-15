@@ -229,8 +229,7 @@ function sharePool(share){
   const seat = shareSum(share);
   const full = fullSeat();
   if (!seat || !full) return 0;
-  if (seat >= full) return POT;
-  return seat * (MONTHS_COUNT - 1);
+  return Math.round(seat / full * POT);
 }
 function portionOfPot(share, amt){
   const total = shareSum(share);
