@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>جمعية 31,500</title>
+<title>جمعية 28,500</title>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
   :root{
@@ -92,8 +92,8 @@
 </head>
 <body>
 <header>
-  <h1 id="title">جمعية الـ 31,500</h1>
-  <p id="intro">السلفة 31,500 شهرياً — تبدأ <bdi>1-10-2026</bdi></p>
+  <h1 id="title">جمعية الـ 28,500</h1>
+  <p id="intro">السلفة 28,500 شهرياً — تبدأ <bdi>1-10-2026</bdi></p>
   <div class="sync wait" id="syncStatus">جاري الاتصال بقاعدة البيانات…</div>
   <a class="sync-help" id="syncHelp" href="https://console.firebase.google.com/project/al-taawun-pharmacies-reports/firestore" target="_blank" rel="noopener" hidden>فتح Cloud Firestore في لوحة Firebase</a>
 </header>
@@ -181,7 +181,7 @@ const firebaseConfig = {
   measurementId: "G-QG22G3J6J4"
 };
 
-let POT = 31500, MONTHS_COUNT = 11;
+let POT = 28500, MONTHS_COUNT = 10;
 let startYear = 2026, startMonth = 9;
 const SHARES = [
   {n:1,  m:[['ايات',2000],['علي',1000]]},
@@ -194,7 +194,6 @@ const SHARES = [
   {n:8,  m:[['زينة',1500],['علي الطويل',1500]]},
   {n:9,  m:[['ايناس',500],['دعاء',1500],['حسن',1000]]},
   {n:10, m:[['دندون',3000]]},
-  {n:11, m:[['صديق دندون',3000]]},
 ];
 const MONTH_NAMES = ['كانون الثاني','شباط','آذار','نيسان','أيار','حزيران','تموز','آب','أيلول','تشرين الأول','تشرين الثاني','كانون الأول'];
 function monthDate(i){
